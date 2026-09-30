@@ -13,10 +13,12 @@ A distributed task queue library for Go, backed by Redis. Built from scratch to 
 - **Named Queues** — multiple independent queues (`email`, `image`, etc.) with separate worker pools
 - **Job Lifecycle Tracking** — status progression: `pending` → `running` → `success` / `failed` / `dead`
 - **Retry with Exponential Backoff** — configurable max retries per job type, backoff capped at 5 minutes
-- **Dead-Letter Queue (DLQ)** — permanently failed jobs are preserved for inspection
+- **Dead-Letter Queue (DLQ)** — permanently failed jobs are preserved for inspection and can be retried
+- **DLQ Retry** — rescue dead jobs individually or in bulk back to the main queue
+- **Scheduled Jobs** — enqueue jobs to be processed at a future time or after a delay
 - **Distributed Locking** — Redis-based lock prevents double processing across workers
 - **Graceful Shutdown** — in-flight jobs complete before workers exit
-- **Metrics** — query-able counters: enqueued, processed, failed, dead, pending, DLQ size
+- **Metrics** — query-able counters: enqueued, processed, failed, dead, pending, scheduled, DLQ size
 
 ## Installation
 

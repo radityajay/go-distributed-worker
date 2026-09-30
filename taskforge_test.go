@@ -293,3 +293,117 @@ func TestGracefulShutdown(t *testing.T) {
 		t.Error("expected in-flight job to complete before shutdown")
 	}
 }
+
+func TestScheduledJob(t *testing.T) {
+	client, ctx := setupClient(t)
+
+	var processed atomic.Int32
+
+	client.Register("scheduled_job", func(ctx context.Context, job *taskforge.Job) error {
+		processed.Add(1)
+		return nil
+	})
+
+	// Schedule a job to be processed in 1 second.
+	_, err := client.EnqueueIn(ctx, "test", "scheduled_job", map[string]interface{}{"key": "val"}, 1, 1*time.Second)
+	if err != nil {
+		t.Fatalf("enqueue in error: %v", err)
+	}
+
+	// Verify it's in the scheduled set, not the queue.
+	metrics, _ := client.GetMetrics(ctx, "test")
+	if metrics["scheduled"] != 1 {
+		t.Errorf("expected 1 scheduled, got %d", metrics["scheduled"])
+	}
+	if metrics["pending"] != 0 {
+		t.Errorf("expected 0 pending, got %d", metrics["pending"])
+	}
+
+	// Start workers — the scheduler goroutine will promote the job when it's due.
+	client.StartWorkers(ctx, taskforge.WorkerPoolConfig{
+		Queue:        "test",
+		Concurrency:  1,
+		PollInterval: 500 * time.Millisecond,
+	})
+
+	// Wait for the scheduled job to be promoted and processed.
+	deadline := time.After(10 * time.Second)
+	for {
+		if processed.Load() == 1 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("timeout: job not processed, processed=%d", processed.Load())
+		default:
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+}
+
+func TestRetryDLQ(t *testing.T) {
+	client, ctx := setupClient(t)
+
+	var attempts atomic.Int32
+
+	client.Register("retry_dlq_job", func(ctx context.Context, job *taskforge.Job) error {
+		count := attempts.Add(1)
+		if count <= 1 {
+			return errors.New("fail first time")
+		}
+		return nil // succeed on retry from DLQ
+	})
+
+	// Enqueue with max 1 retry — will fail and go to DLQ immediately.
+	job, _ := client.Enqueue(ctx, "test", "retry_dlq_job", map[string]interface{}{}, 1)
+
+	client.StartWorkers(ctx, taskforge.WorkerPoolConfig{
+		Queue:        "test",
+		Concurrency:  1,
+		PollInterval: 500 * time.Millisecond,
+		BaseDelay:    50 * time.Millisecond,
+	})
+
+	// Wait for job to hit DLQ.
+	deadline := time.After(5 * time.Second)
+	for {
+		dlq, _ := client.ListDLQ(ctx, "test")
+		if len(dlq) == 1 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("timeout waiting for job to reach DLQ")
+		default:
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+
+	// Retry from DLQ.
+	err := client.RetryDLQ(ctx, "test", job.ID)
+	if err != nil {
+		t.Fatalf("retry dlq error: %v", err)
+	}
+
+	// DLQ should be empty now.
+	dlq, _ := client.ListDLQ(ctx, "test")
+	if len(dlq) != 0 {
+		t.Errorf("expected empty DLQ, got %v", dlq)
+	}
+
+	// Wait for job to be processed successfully.
+	deadline = time.After(5 * time.Second)
+	for {
+		fetched, _ := client.GetJob(ctx, job.ID)
+		if fetched.Status == taskforge.StatusSuccess {
+			break
+		}
+		select {
+		case <-deadline:
+			fetched, _ := client.GetJob(ctx, job.ID)
+			t.Fatalf("timeout: job status=%s, attempts=%d", fetched.Status, attempts.Load())
+		default:
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+}

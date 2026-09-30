@@ -3,6 +3,7 @@ package taskforge
 import (
 	"context"
 	"log"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -54,6 +55,24 @@ func (c *Client) Enqueue(ctx context.Context, queue, jobType string, payload map
 	return job, nil
 }
 
+// EnqueueAt creates a job scheduled to be processed at a specific time.
+func (c *Client) EnqueueAt(ctx context.Context, queue, jobType string, payload map[string]interface{}, maxRetry int, processAt time.Time) (*Job, error) {
+	job := NewJob(queue, jobType, payload, maxRetry)
+	if err := c.broker.EnqueueAt(ctx, job, processAt); err != nil {
+		return nil, err
+	}
+	return job, nil
+}
+
+// EnqueueIn creates a job scheduled to be processed after a delay.
+func (c *Client) EnqueueIn(ctx context.Context, queue, jobType string, payload map[string]interface{}, maxRetry int, delay time.Duration) (*Job, error) {
+	job := NewJob(queue, jobType, payload, maxRetry)
+	if err := c.broker.EnqueueIn(ctx, job, delay); err != nil {
+		return nil, err
+	}
+	return job, nil
+}
+
 // StartWorkers starts a worker pool for the given configuration.
 func (c *Client) StartWorkers(ctx context.Context, config WorkerPoolConfig) *WorkerPool {
 	pool := NewWorkerPool(c.broker, c.registry, config, c.logger)
@@ -82,6 +101,17 @@ func (c *Client) GetMetrics(ctx context.Context, queue string) (map[string]int64
 // ListDLQ returns all job IDs in the dead-letter queue for a given queue.
 func (c *Client) ListDLQ(ctx context.Context, queue string) ([]string, error) {
 	return c.broker.ListDLQ(ctx, queue)
+}
+
+// RetryDLQ moves a single job from the dead-letter queue back to the main queue.
+func (c *Client) RetryDLQ(ctx context.Context, queue, jobID string) error {
+	return c.broker.RetryDLQ(ctx, queue, jobID)
+}
+
+// RetryAllDLQ moves all jobs from the dead-letter queue back to the main queue.
+// Returns the number of jobs retried.
+func (c *Client) RetryAllDLQ(ctx context.Context, queue string) (int64, error) {
+	return c.broker.RetryAllDLQ(ctx, queue)
 }
 
 // Broker returns the underlying broker for advanced usage.

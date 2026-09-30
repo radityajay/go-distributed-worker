@@ -72,6 +72,10 @@ func (wp *WorkerPool) Start(ctx context.Context) {
 		go wp.worker(ctx, i)
 	}
 
+	// Scheduler goroutine: promotes delayed jobs that are now due.
+	wp.wg.Add(1)
+	go wp.scheduler(ctx)
+
 	wp.logger.Printf("[taskforge] pool started: queue=%s workers=%d", wp.config.Queue, wp.config.Concurrency)
 }
 
@@ -92,6 +96,28 @@ func (wp *WorkerPool) worker(ctx context.Context, id int) {
 			return
 		default:
 			wp.poll(ctx, id)
+		}
+	}
+}
+
+func (wp *WorkerPool) scheduler(ctx context.Context) {
+	defer wp.wg.Done()
+
+	ticker := time.NewTicker(wp.config.PollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			promoted, err := wp.broker.PromoteScheduled(ctx, wp.config.Queue)
+			if err != nil && ctx.Err() == nil {
+				wp.logger.Printf("[taskforge] scheduler error for queue %s: %v", wp.config.Queue, err)
+			}
+			if promoted > 0 {
+				wp.logger.Printf("[taskforge] scheduler promoted %d jobs in queue %s", promoted, wp.config.Queue)
+			}
 		}
 	}
 }

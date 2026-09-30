@@ -148,6 +148,52 @@ func (b *Broker) ListDLQ(ctx context.Context, queue string) ([]string, error) {
 	return b.client.LRange(ctx, b.dlqKey(queue), 0, -1).Result()
 }
 
+// RetryDLQ moves a job from the dead-letter queue back to the main queue.
+// Resets the job's retry counter and status to pending.
+func (b *Broker) RetryDLQ(ctx context.Context, queue, jobID string) error {
+	// Remove from DLQ.
+	removed, err := b.client.LRem(ctx, b.dlqKey(queue), 1, jobID).Result()
+	if err != nil {
+		return fmt.Errorf("taskforge: retry dlq remove: %w", err)
+	}
+	if removed == 0 {
+		return fmt.Errorf("taskforge: job %s not found in DLQ for queue %s", jobID, queue)
+	}
+
+	// Reset job state.
+	job, err := b.GetJob(ctx, jobID)
+	if err != nil {
+		return err
+	}
+	job.Retry = 0
+	job.Status = StatusPending
+	job.Error = ""
+	if err := b.UpdateJob(ctx, job); err != nil {
+		return err
+	}
+
+	// Re-enqueue.
+	return b.client.LPush(ctx, b.queueKey(queue), jobID).Err()
+}
+
+// RetryAllDLQ moves all jobs from the dead-letter queue back to the main queue.
+// Returns the number of jobs retried.
+func (b *Broker) RetryAllDLQ(ctx context.Context, queue string) (int64, error) {
+	jobIDs, err := b.ListDLQ(ctx, queue)
+	if err != nil {
+		return 0, err
+	}
+
+	var count int64
+	for _, jobID := range jobIDs {
+		if err := b.RetryDLQ(ctx, queue, jobID); err != nil {
+			return count, err
+		}
+		count++
+	}
+	return count, nil
+}
+
 // GetMetrics returns metrics for a queue.
 func (b *Broker) GetMetrics(ctx context.Context, queue string) (map[string]int64, error) {
 	metrics := make(map[string]int64)
@@ -174,6 +220,13 @@ func (b *Broker) GetMetrics(ctx context.Context, queue string) (map[string]int64
 		return nil, err
 	}
 	metrics["dlq_size"] = dlqLen
+
+	// scheduled count
+	schedLen, err := b.ScheduledCount(ctx, queue)
+	if err != nil {
+		return nil, err
+	}
+	metrics["scheduled"] = schedLen
 
 	return metrics, nil
 }

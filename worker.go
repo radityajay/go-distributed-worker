@@ -17,11 +17,12 @@ const (
 
 // WorkerPoolConfig configures a worker pool for a specific queue.
 type WorkerPoolConfig struct {
-	Queue       string
-	Concurrency int
+	Queue        string
+	Concurrency  int
 	PollInterval time.Duration
 	LockTTL      time.Duration
 	BaseDelay    time.Duration // base delay for exponential backoff
+	JobTimeout   time.Duration // max duration per job execution; 0 means no timeout
 }
 
 func (c *WorkerPoolConfig) applyDefaults() {
@@ -171,9 +172,23 @@ func (wp *WorkerPool) process(ctx context.Context, workerID int, job *Job) {
 		return
 	}
 
-	// Execute handler.
-	if err := handler(ctx, job); err != nil {
+	// Execute handler with optional timeout.
+	handlerCtx := ctx
+	var cancelTimeout context.CancelFunc
+	if wp.config.JobTimeout > 0 {
+		handlerCtx, cancelTimeout = context.WithTimeout(context.Background(), wp.config.JobTimeout)
+		defer cancelTimeout()
+	}
+
+	if err := handler(handlerCtx, job); err != nil {
 		wp.handleFailure(ctx, workerID, job, err)
+		return
+	}
+
+	// Check if the handler "succeeded" but the context timed out
+	// (handler ignored context cancellation).
+	if cancelTimeout != nil && handlerCtx.Err() != nil {
+		wp.handleFailure(ctx, workerID, job, fmt.Errorf("job timed out after %s", wp.config.JobTimeout))
 		return
 	}
 

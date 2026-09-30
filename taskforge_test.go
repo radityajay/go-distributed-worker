@@ -407,3 +407,55 @@ func TestRetryDLQ(t *testing.T) {
 		}
 	}
 }
+
+func TestJobTimeout(t *testing.T) {
+	client, ctx := setupClient(t)
+
+	var timedOut atomic.Bool
+
+	client.Register("slow_handler", func(ctx context.Context, job *taskforge.Job) error {
+		select {
+		case <-ctx.Done():
+			timedOut.Store(true)
+			return ctx.Err()
+		case <-time.After(10 * time.Second):
+			return nil
+		}
+	})
+
+	job, _ := client.Enqueue(ctx, "test", "slow_handler", map[string]interface{}{}, 1)
+
+	client.StartWorkers(ctx, taskforge.WorkerPoolConfig{
+		Queue:        "test",
+		Concurrency:  1,
+		PollInterval: 500 * time.Millisecond,
+		JobTimeout:   500 * time.Millisecond, // timeout after 500ms
+		BaseDelay:    50 * time.Millisecond,
+	})
+
+	// Wait for the job to hit DLQ (max retry = 1, so it fails once and goes to DLQ).
+	deadline := time.After(10 * time.Second)
+	for {
+		fetched, _ := client.GetJob(ctx, job.ID)
+		if fetched != nil && fetched.Status == taskforge.StatusDead {
+			break
+		}
+		select {
+		case <-deadline:
+			fetched, _ := client.GetJob(ctx, job.ID)
+			t.Fatalf("timeout: job status=%s, timedOut=%v", fetched.Status, timedOut.Load())
+		default:
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+
+	if !timedOut.Load() {
+		t.Error("expected handler to receive context cancellation from timeout")
+	}
+
+	// Verify the error message mentions timeout.
+	fetched, _ := client.GetJob(ctx, job.ID)
+	if fetched.Error == "" {
+		t.Error("expected error message on timed out job")
+	}
+}

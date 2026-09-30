@@ -109,6 +109,11 @@ Producer                         Redis                          Workers
 | `PollInterval` | 1s | How long BRPOP blocks before checking shutdown |
 | `LockTTL` | 5m | Distributed lock expiry per job |
 | `BaseDelay` | 1s | Base delay for exponential backoff (delay = base × 2^attempt) |
+| `JobTimeout` | 0 (none) | Max duration per job execution; 0 means no timeout |
+
+## Design Decisions
+
+See [DESIGN.md](DESIGN.md) for detailed explanation of engineering tradeoffs: why BRPOP over Pub/Sub, why SETNX for locking, why exponential backoff with a cap, and more.
 
 ## Testing
 

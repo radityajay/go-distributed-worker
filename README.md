@@ -1,9 +1,9 @@
 # taskforge
 
-[![CI](https://github.com/radityajayantara/taskforge/actions/workflows/ci.yml/badge.svg)](https://github.com/radityajayantara/taskforge/actions/workflows/ci.yml)
+[![CI](https://github.com/radityajay/go-distributed-worker/actions/workflows/ci.yml/badge.svg)](https://github.com/radityajay/go-distributed-worker/actions/workflows/ci.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/radityajayantara/taskforge.svg)](https://pkg.go.dev/github.com/radityajayantara/taskforge)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Go Version](https://img.shields.io/github/go-mod/go-version/radityajayantara/taskforge)](https://go.dev/)
+[![Go Version](https://img.shields.io/github/go-mod-go-version/radityajay/go-distributed-worker)](https://go.dev/)
 
 A distributed task queue library for Go, backed by Redis. Built from scratch to demonstrate deep understanding of background processing, concurrency, and message queue management.
 
